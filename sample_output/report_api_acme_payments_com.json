@@ -1,0 +1,390 @@
+{
+  "report_id": "a1b2c3d4e5f6",
+  "generated_at": "2025-01-15T09:42:11Z",
+  "asset": {
+    "asset_id": "evt-20250115-alb-0042",
+    "hostname": "api.acme-payments.com",
+    "asset_type": "alb",
+    "region": "us-east-1",
+    "account_id": "123456789012",
+    "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/acme-payments-alb/50dc6c495c0c9188",
+    "owner": "payments-team",
+    "team": "backend",
+    "environment": "production",
+    "tags": {
+      "Owner": "payments-team",
+      "Team": "backend",
+      "Environment": "production",
+      "Service": "payments-api",
+      "CostCenter": "eng-1042"
+    },
+    "discovered_at": "2025-01-15T09:38:02Z",
+    "discovered_via": "cloudtrail"
+  },
+  "scan_summary": {
+    "status": "complete",
+    "duration_seconds": 18.4,
+    "finding_counts": {
+      "CRITICAL": 3,
+      "HIGH": 4,
+      "MEDIUM": 5,
+      "LOW": 3,
+      "INFO": 1
+    },
+    "overall_risk": "CRITICAL"
+  },
+  "findings": [
+    {
+      "check_id": "PORT-6379_OPEN",
+      "title": "Redis Port Open (6379) — Unauthenticated Cache Exposed",
+      "risk_level": "CRITICAL",
+      "category": "Network Exposure",
+      "description": "Redis is open to the internet. By default, Redis has no authentication. Internet-facing Redis has been exploited to drop cryptocurrency miners, exfiltrate data, and achieve code execution via config manipulation.",
+      "evidence": {
+        "port": 6379,
+        "service": "Redis",
+        "all_open_ports": [22, 80, 443, 6379, 8080]
+      },
+      "remediation": "Immediately restrict Redis port to the application subnet. Enable Redis AUTH (requirepass) and disable dangerous commands (CONFIG, SLAVEOF).",
+      "cwe_id": "CWE-284",
+      "cvss_score": 9.8,
+      "references": []
+    },
+    {
+      "check_id": "ENDPOINT-ADMIN",
+      "title": "Admin Panel Exposed",
+      "risk_level": "CRITICAL",
+      "category": "Admin Access",
+      "description": "Admin panel is internet-accessible — should be restricted to internal networks or VPN.",
+      "evidence": {
+        "url": "https://api.acme-payments.com/admin",
+        "status_code": 200
+      },
+      "remediation": "Restrict admin interfaces to internal networks or VPN using security groups, NACLs, or ALB IP-based rules. Never expose admin panels to the internet.",
+      "cwe_id": "CWE-200",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "ENDPOINT-ENV_FILE",
+      "title": ".env File Exposed",
+      "risk_level": "CRITICAL",
+      "category": "Secrets Exposure",
+      "description": ".env file may contain database credentials, API keys, and other secrets.",
+      "evidence": {
+        "url": "https://api.acme-payments.com/.env",
+        "status_code": 200
+      },
+      "remediation": "Remove sensitive files from the web root immediately. Rotate any credentials that may have been exposed. Add these paths to .gitignore and server deny rules.",
+      "cwe_id": "CWE-200",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "TLS-CERT_EXPIRING_SOON",
+      "title": "TLS Certificate Expiring in 11 Days",
+      "risk_level": "HIGH",
+      "category": "TLS/SSL",
+      "description": "The certificate will expire on 2025-01-26. Plan immediate renewal to avoid service disruption.",
+      "evidence": {
+        "days_to_expiry": 11,
+        "valid_to": "2025-01-26T00:00:00+00:00"
+      },
+      "remediation": "Renew the certificate. Enable automatic renewal in ACM or certbot.",
+      "cwe_id": "CWE-298",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "PORT-22_OPEN",
+      "title": "SSH Port Open (22) — Internet-Accessible",
+      "risk_level": "MEDIUM",
+      "category": "Network Exposure",
+      "description": "SSH port is accessible from the internet. While SSH itself is encrypted, internet-facing SSH is targeted by automated brute-force and credential-stuffing attacks.",
+      "evidence": {
+        "port": 22,
+        "service": "SSH",
+        "all_open_ports": [22, 80, 443, 6379, 8080]
+      },
+      "remediation": "Restrict SSH (port 22) to internal networks/VPN via security group rules. Use AWS Systems Manager Session Manager as a keyless alternative.",
+      "cwe_id": "CWE-284",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "HDR-STRICT_TRANSPORT_SECURITY_MISSING",
+      "title": "Missing HTTP Strict Transport Security (HSTS)",
+      "risk_level": "HIGH",
+      "category": "Security Headers",
+      "description": "The 'strict-transport-security' header is absent from HTTP responses.",
+      "evidence": {
+        "header": "strict-transport-security",
+        "status_code": 200
+      },
+      "remediation": "Add 'Strict-Transport-Security: max-age=31536000; includeSubDomains; preload' response header.",
+      "cwe_id": "CWE-319",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "HDR-CONTENT_SECURITY_POLICY_MISSING",
+      "title": "Missing Content-Security-Policy Header",
+      "risk_level": "MEDIUM",
+      "category": "Security Headers",
+      "description": "The 'content-security-policy' header is absent from HTTP responses.",
+      "evidence": {
+        "header": "content-security-policy",
+        "status_code": 200
+      },
+      "remediation": "Implement a Content-Security-Policy header to mitigate XSS and data injection attacks.",
+      "cwe_id": "CWE-358",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "HDR-X_FRAME_OPTIONS_MISSING",
+      "title": "Missing X-Frame-Options Header",
+      "risk_level": "MEDIUM",
+      "category": "Security Headers",
+      "description": "The 'x-frame-options' header is absent from HTTP responses.",
+      "evidence": {
+        "header": "x-frame-options",
+        "status_code": 200
+      },
+      "remediation": "Add 'X-Frame-Options: DENY' or 'SAMEORIGIN' to prevent clickjacking attacks.",
+      "cwe_id": "CWE-1021",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "ENDPOINT-SWAGGER_UI",
+      "title": "Swagger UI Exposed",
+      "risk_level": "HIGH",
+      "category": "API Exposure",
+      "description": "Swagger UI reveals full API schema, parameters, and may allow unauthenticated API testing.",
+      "evidence": {
+        "url": "https://api.acme-payments.com/swagger-ui.html",
+        "status_code": 200
+      },
+      "remediation": "Require authentication before serving API documentation. In production, disable Swagger/GraphiQL UIs or restrict to internal IPs.",
+      "cwe_id": "CWE-200",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "HDR-NO_WAF_DETECTED",
+      "title": "No Web Application Firewall Detected",
+      "risk_level": "MEDIUM",
+      "category": "Defence in Depth",
+      "description": "No WAF or CDN-based protection signals were found in response headers. Internet-facing applications should be protected by a WAF.",
+      "evidence": {
+        "headers_checked": ["content-type", "server", "x-powered-by"]
+      },
+      "remediation": "Deploy AWS WAF, Cloudflare, or similar WAF in front of this asset.",
+      "cwe_id": "CWE-693",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "HDR-SERVER_DISCLOSED",
+      "title": "Verbose Server Header Exposes Version Information",
+      "risk_level": "LOW",
+      "category": "Information Disclosure",
+      "description": "Response header 'server' reveals: 'nginx/1.18.0'",
+      "evidence": {
+        "header": "server",
+        "value": "nginx/1.18.0"
+      },
+      "remediation": "Configure the server to return a generic or empty Server header.",
+      "cwe_id": "CWE-200",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "GOVERNANCE-MISSING_OWNER_TAG",
+      "title": "Asset Has No Owner Tag",
+      "risk_level": "MEDIUM",
+      "category": "Governance",
+      "description": "The asset 'api.acme-payments.com' has no 'Owner' tag. Without ownership metadata, security incidents cannot be escalated and the asset may become abandoned/forgotten.",
+      "evidence": {
+        "tags": {},
+        "hostname": "api.acme-payments.com"
+      },
+      "remediation": "Enforce mandatory tagging via AWS Config rule 'required-tags'. Required tags: Owner, Team, Environment.",
+      "cwe_id": "CWE-200",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "PORT-EXCESSIVE_EXPOSURE",
+      "title": "Excessive Port Exposure: 5 Ports Open",
+      "risk_level": "MEDIUM",
+      "category": "Network Exposure",
+      "description": "The asset has 5 open ports: [22, 80, 443, 6379, 8080]. Internet-facing assets should expose the minimum necessary ports (principle of least privilege).",
+      "evidence": {
+        "open_ports": [22, 80, 443, 6379, 8080],
+        "count": 5
+      },
+      "remediation": "Audit all open ports. Close any not required for the asset's function. Apply security group rules.",
+      "cwe_id": "CWE-284",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "HDR-REFERRER_POLICY_MISSING",
+      "title": "Missing Referrer-Policy Header",
+      "risk_level": "LOW",
+      "category": "Security Headers",
+      "description": "The 'referrer-policy' header is absent from HTTP responses.",
+      "evidence": {
+        "header": "referrer-policy",
+        "status_code": 200
+      },
+      "remediation": "Add 'Referrer-Policy: strict-origin-when-cross-origin' to control referrer information.",
+      "cwe_id": "CWE-200",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "HDR-PERMISSIONS_POLICY_MISSING",
+      "title": "Missing Permissions-Policy Header",
+      "risk_level": "LOW",
+      "category": "Security Headers",
+      "description": "The 'permissions-policy' header is absent from HTTP responses.",
+      "evidence": {
+        "header": "permissions-policy",
+        "status_code": 200
+      },
+      "remediation": "Add Permissions-Policy header to restrict access to browser features.",
+      "cwe_id": "CWE-284",
+      "cvss_score": 0.0,
+      "references": []
+    },
+    {
+      "check_id": "ENDPOINT-ROBOTS_TXT",
+      "title": "Robots.txt Exists",
+      "risk_level": "INFO",
+      "category": "Info Disclosure",
+      "description": "robots.txt may reveal hidden paths — review for sensitive endpoint disclosures.",
+      "evidence": {
+        "url": "https://api.acme-payments.com/robots.txt",
+        "status_code": 200
+      },
+      "remediation": "Review file content for sensitive path disclosures. Remove or restrict access if not needed publicly.",
+      "cwe_id": "CWE-200",
+      "cvss_score": 0.0,
+      "references": []
+    }
+  ],
+  "llm_review": {
+    "overall_risk": "CRITICAL",
+    "executive_summary": "The production payments API at api.acme-payments.com has 3 critical vulnerabilities requiring immediate action: an exposed Redis cache, an accessible admin panel, and a publicly readable .env secrets file. Any one of these could result in full system compromise, data exfiltration, or regulatory breach under PCI DSS. The security team should treat this as an active incident until the critical findings are remediated.",
+    "key_findings": [
+      "CRITICAL: Redis (port 6379) is directly internet-accessible with no authentication — full cache read/write by any attacker",
+      "CRITICAL: Admin panel (/admin) returns HTTP 200 from the public internet — no IP restriction in place",
+      "CRITICAL: .env file is publicly readable — likely contains database credentials and API keys",
+      "HIGH: TLS certificate expires in 11 days — payment flows will break for all users without renewal",
+      "HIGH: Swagger UI exposes full API schema including payment endpoints to unauthenticated users",
+      "HIGH: HSTS header missing — users can be downgraded to HTTP via MITM attacks",
+      "MEDIUM: No WAF detected — no automated protection against OWASP Top 10 attacks",
+      "MEDIUM: SSH accessible from internet — automated brute-force attempts are ongoing"
+    ],
+    "attack_surface_analysis": "This production ALB serves as the entry point for the payments API and is exposed across 5 ports. The primary attack vector is the unauthenticated Redis port (6379) which enables an attacker to read session tokens, payment data cached in memory, and use the CONFIG command to write files to disk for RCE. A secondary vector is the /admin panel (HTTP 200) combined with the exposed .env file — an attacker can read the .env to obtain admin credentials and authenticate to the panel within minutes. The Swagger UI at /swagger-ui.html maps all payment API endpoints, parameters, and authentication flows, dramatically reducing attacker reconnaissance time. The missing HSTS and no WAF mean that even authenticated sessions could be intercepted on untrusted networks.",
+    "prioritized_actions": [
+      {
+        "priority": "1",
+        "action": "Immediately add AWS Security Group rule to deny all inbound traffic on port 6379 from 0.0.0.0/0. Then add Redis AUTH password and bind to VPC-internal interface only.",
+        "effort": "low",
+        "impact": "high"
+      },
+      {
+        "priority": "2",
+        "action": "Move .env file outside the web root or deny access via nginx 'location ~ /\\.env { deny all; }'. Immediately rotate ALL credentials in the file assuming it has been read.",
+        "effort": "low",
+        "impact": "high"
+      },
+      {
+        "priority": "3",
+        "action": "Add ALB Listener Rule to restrict /admin path to company VPN CIDR range (e.g. 10.0.0.0/8). Do not rely on application-level auth alone.",
+        "effort": "low",
+        "impact": "high"
+      },
+      {
+        "priority": "4",
+        "action": "Renew ACM certificate immediately via AWS Console or CLI: aws acm renew-certificate --certificate-arn <arn>. Enable auto-renewal flag.",
+        "effort": "low",
+        "impact": "high"
+      },
+      {
+        "priority": "5",
+        "action": "Enable AWS WAF on this ALB with the AWS Managed Rule Groups: AWSManagedRulesCommonRuleSet and AWSManagedRulesSQLiRuleSet. Estimated 30 minutes to configure.",
+        "effort": "low",
+        "impact": "high"
+      }
+    ],
+    "threat_scenarios": [
+      "Scenario 1 — Redis RCE in under 5 minutes: Attacker runs 'redis-cli -h api.acme-payments.com' with no password, executes CONFIG SET dir /var/www/html and CONFIG SET dbfilename shell.php, then BGSAVE to write a webshell. Full server compromise without credentials.",
+      "Scenario 2 — Credential harvest via .env: Automated scanner (Shodan, nuclei) discovers /.env returning 200, downloads file, extracts DATABASE_URL and STRIPE_SECRET_KEY. Attacker exfiltrates payment data and makes fraudulent Stripe API calls.",
+      "Scenario 3 — Admin takeover via leaked creds: Attacker combines .env credentials with /admin panel access. Logs in as administrator, creates backdoor admin user, and maintains persistent access even after .env is rotated.",
+      "Scenario 4 — API abuse via Swagger: Attacker uses Swagger UI to enumerate all payment endpoints, identifies /api/v1/refunds endpoint with missing rate limiting, and issues fraudulent refunds at scale."
+    ],
+    "compliance_notes": "These findings constitute violations of multiple PCI DSS v4.0 requirements: Req 1.3 (network access controls — Redis exposed), Req 6.4.1 (WAF required for internet-facing apps), Req 6.4.3 (payment page script management), Req 8.3 (strong authentication — admin panel without MFA). The exposed .env file likely violates Req 3.5 (protect stored cardholder data) and Req 6.5 (develop secure applications). Immediate remediation is required to maintain PCI compliance. A SAQ-D merchant with these findings would fail a QSA audit.",
+    "model": "claude-opus-4-5",
+    "tokens_used": 1842
+  },
+  "metadata": {
+    "dns_records": {
+      "hostname": "api.acme-payments.com",
+      "ipv4": ["54.210.167.204"],
+      "ipv6": [],
+      "cname": "acme-payments-alb-50dc6c495c0c9188.us-east-1.elb.amazonaws.com",
+      "ptr": "ec2-54-210-167-204.compute-1.amazonaws.com"
+    },
+    "port_scan": {
+      "open_ports": [22, 80, 443, 6379, 8080],
+      "port_services": {
+        "22": "SSH",
+        "80": "HTTP",
+        "443": "HTTPS",
+        "6379": "Redis",
+        "8080": "HTTP-proxy"
+      },
+      "scan_time_s": 3.2
+    },
+    "http_info": {
+      "status_code": 301,
+      "server": "nginx/1.18.0",
+      "technologies": ["Nginx"],
+      "waf_detected": false,
+      "cdn_detected": false,
+      "cdn_provider": "",
+      "response_time_ms": 42.1,
+      "content_type": "text/html",
+      "security_headers": {}
+    },
+    "https_info": {
+      "status_code": 200,
+      "server": "nginx/1.18.0",
+      "technologies": ["Nginx", "Express.js"],
+      "waf_detected": false,
+      "cdn_detected": false,
+      "cdn_provider": "",
+      "response_time_ms": 118.4,
+      "content_type": "application/json",
+      "security_headers": {
+        "X-Content-Type-Options": "nosniff"
+      }
+    },
+    "tls_info": {
+      "issuer": "C=US, O=Amazon, CN=Amazon RSA 2048 M01",
+      "subject": "CN=api.acme-payments.com",
+      "valid_to": "2025-01-26T00:00:00+00:00",
+      "days_to_expiry": 11,
+      "is_expired": false,
+      "is_self_signed": false,
+      "is_wildcard": false,
+      "protocol_versions": ["TLSv1.3"],
+      "san_domains": ["api.acme-payments.com", "acme-payments.com"]
+    }
+  }
+}

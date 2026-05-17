@@ -1,0 +1,329 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Asset Security Review — AWS infrastructure.
+  Deploys EventBridge rules, SQS queues, Lambda functions,
+  and supporting IAM roles for automated asset discovery and scanning.
+
+Parameters:
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Description: Anthropic API key for LLM-based security review
+
+  SlackWebhookUrl:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Slack webhook URL for high/critical alerts (optional)
+
+  ScannerImageUri:
+    Type: String
+    Description: >
+      ECR URI for the scanner Lambda container image.
+      e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/cloud-asset-scanner:latest
+
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [production, staging, development]
+
+Resources:
+
+  # ── SQS Queue ─────────────────────────────────────────────────────
+  ScanQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "asset-scan-queue-${Environment}.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      VisibilityTimeout: 300          # 5 min — must be >= Lambda timeout
+      MessageRetentionPeriod: 86400   # 24 hours
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ScanDLQ.Arn
+        maxReceiveCount: 2
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  ScanDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "asset-scan-dlq-${Environment}.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      MessageRetentionPeriod: 604800  # 7 days
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── Secrets Manager ───────────────────────────────────────────────
+  ScannerSecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "cloud-asset-scanner/${Environment}"
+      Description: API keys and webhook URLs for the security scanner
+      SecretString: !Sub |
+        {
+          "ANTHROPIC_API_KEY": "${AnthropicApiKey}",
+          "SLACK_WEBHOOK_URL": "${SlackWebhookUrl}"
+        }
+
+  # ── S3 Bucket for reports ─────────────────────────────────────────
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "cloud-asset-security-reports-${AWS::AccountId}-${Environment}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldReports
+            Status: Enabled
+            ExpirationInDays: 365
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── IAM Role for Discovery Lambda ─────────────────────────────────
+  DiscoveryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "CloudAssetDiscoveryRole-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DiscoveryPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt ScanQueue.Arn
+
+  # ── IAM Role for Scanner Lambda ───────────────────────────────────
+  ScannerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "CloudAssetScannerRole-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+      Policies:
+        - PolicyName: ScannerPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub "${ReportsBucket.Arn}/*"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref ScannerSecrets
+
+  # ── Discovery Lambda ──────────────────────────────────────────────
+  DiscoveryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "cloud-asset-discovery-${Environment}"
+      Description: "Receives CloudTrail events and registers new assets for scanning"
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ScannerImageUri
+      ImageConfig:
+        Command: ["src.orchestration.lambda_handler.handler_discover"]
+      Role: !GetAtt DiscoveryLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          SCAN_QUEUE_URL: !Ref ScanQueue
+          ENVIRONMENT: !Ref Environment
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── Scanner Lambda ────────────────────────────────────────────────
+  ScannerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "cloud-asset-scanner-${Environment}"
+      Description: "Runs full security scan pipeline for a single asset"
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ScannerImageUri
+      ImageConfig:
+        Command: ["src.orchestration.lambda_handler.handler_scan"]
+      Role: !GetAtt ScannerLambdaRole.Arn
+      Timeout: 240           # 4 minutes per scan
+      MemorySize: 512
+      ReservedConcurrentExecutions: 10   # Max 10 parallel scans
+      Environment:
+        Variables:
+          SECRETS_ARN: !Ref ScannerSecrets
+          REPORTS_BUCKET: !Ref ReportsBucket
+          ENVIRONMENT: !Ref Environment
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── SQS → Scanner Lambda trigger ──────────────────────────────────
+  ScannerSQSTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt ScanQueue.Arn
+      FunctionName: !GetAtt ScannerFunction.Arn
+      BatchSize: 1                    # One asset per Lambda invocation
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  # ── EventBridge Rules ─────────────────────────────────────────────
+  EC2CreationRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "detect-new-ec2-${Environment}"
+      Description: "Triggers discovery on new EC2 instances with public IPs"
+      EventPattern:
+        source: ["aws.ec2"]
+        detail-type: ["AWS API Call via CloudTrail"]
+        detail:
+          eventName: ["RunInstances"]
+      State: ENABLED
+      Targets:
+        - Id: DiscoveryLambda
+          Arn: !GetAtt DiscoveryFunction.Arn
+
+  ALBCreationRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "detect-new-alb-${Environment}"
+      Description: "Triggers discovery on new ALB/NLB creation"
+      EventPattern:
+        source: ["aws.elasticloadbalancing"]
+        detail-type: ["AWS API Call via CloudTrail"]
+        detail:
+          eventName: ["CreateLoadBalancer"]
+      State: ENABLED
+      Targets:
+        - Id: DiscoveryLambda
+          Arn: !GetAtt DiscoveryFunction.Arn
+
+  APIGatewayRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "detect-new-apigw-${Environment}"
+      Description: "Triggers discovery on new API Gateway deployments"
+      EventPattern:
+        source: ["aws.apigateway"]
+        detail-type: ["AWS API Call via CloudTrail"]
+        detail:
+          eventName: ["CreateRestApi", "CreateApi", "CreateDeployment"]
+      State: ENABLED
+      Targets:
+        - Id: DiscoveryLambda
+          Arn: !GetAtt DiscoveryFunction.Arn
+
+  Route53Rule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "detect-new-dns-${Environment}"
+      Description: "Triggers discovery on Route53 record creation"
+      EventPattern:
+        source: ["aws.route53"]
+        detail-type: ["AWS API Call via CloudTrail"]
+        detail:
+          eventName: ["ChangeResourceRecordSets"]
+      State: ENABLED
+      Targets:
+        - Id: DiscoveryLambda
+          Arn: !GetAtt DiscoveryFunction.Arn
+
+  # ── Lambda permissions for EventBridge ───────────────────────────
+  DiscoveryEC2Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DiscoveryFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EC2CreationRule.Arn
+
+  DiscoveryALBPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DiscoveryFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ALBCreationRule.Arn
+
+  DiscoveryAPIGWPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DiscoveryFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt APIGatewayRule.Arn
+
+  DiscoveryRoute53Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DiscoveryFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt Route53Rule.Arn
+
+  # ── CloudWatch Alarms ─────────────────────────────────────────────
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "scanner-dlq-messages-${Environment}"
+      AlarmDescription: "Scan jobs landing in DLQ — investigate failures"
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ScanDLQ.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ScanQueueUrl:
+    Value: !Ref ScanQueue
+    Description: SQS queue URL for triggering scans
+
+  ReportsBucketName:
+    Value: !Ref ReportsBucket
+    Description: S3 bucket where reports are stored
+
+  DiscoveryFunctionArn:
+    Value: !GetAtt DiscoveryFunction.Arn
+
+  ScannerFunctionArn:
+    Value: !GetAtt ScannerFunction.Arn

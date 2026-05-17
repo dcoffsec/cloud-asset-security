@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  # ── Scanner worker ────────────────────────────────────────────────
+  scanner:
+    build: .
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MOCK_AWS=${MOCK_AWS:-true}
+      - MOCK_TARGET=${MOCK_TARGET:-example.com}
+      - DB_PATH=/data/asset_registry.db
+      - REPORTS_OUTPUT_DIR=/reports
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - scanner-data:/data
+      - scanner-reports:/reports
+    command: ["src.main", "worker", "--once"]
+
+  # ── Demo scan (scan one target and exit) ─────────────────────────
+  demo:
+    build: .
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MOCK_AWS=true
+      - MOCK_TARGET=${TARGET:-example.com}
+      - DB_PATH=/data/asset_registry.db
+      - REPORTS_OUTPUT_DIR=/reports
+    volumes:
+      - scanner-data:/data
+      - scanner-reports:/reports
+    command: ["src.main", "demo", "--target", "${TARGET:-example.com}"]
+    profiles: ["demo"]
+
+  # ── LocalStack for AWS mocking (optional) ─────────────────────────
+  localstack:
+    image: localstack/localstack:3.0
+    environment:
+      - SERVICES=cloudtrail,sqs,s3,lambda,events
+      - DEBUG=0
+    ports:
+      - "4566:4566"
+    profiles: ["localstack"]
+
+volumes:
+  scanner-data:
+  scanner-reports:

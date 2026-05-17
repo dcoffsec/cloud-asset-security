@@ -1,0 +1,149 @@
+---
+# Kubernetes Job — ephemeral scan worker
+# One Job per asset scan. Auto-deleted after TTL.
+#
+# Usage:
+#   ASSET_ID=abc-123 envsubst < kubernetes/scan-job.yaml | kubectl apply -f -
+#
+# Or via the job-launcher.py helper:
+#   python scripts/launch_k8s_job.py --asset-id abc-123
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: security-scan-${ASSET_ID}
+  namespace: security-scanning
+  labels:
+    app: cloud-asset-security-review
+    component: scanner
+    asset-id: "${ASSET_ID}"
+  annotations:
+    description: "Ephemeral security scan for asset ${ASSET_ID}"
+spec:
+  # Auto-delete job 10 minutes after completion
+  ttlSecondsAfterFinished: 600
+
+  # Retry once on failure
+  backoffLimit: 1
+
+  template:
+    metadata:
+      labels:
+        app: cloud-asset-security-review
+        component: scanner
+    spec:
+      restartPolicy: Never
+
+      # Security context — run as non-root
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      # No automount of service account token
+      automountServiceAccountToken: false
+
+      containers:
+        - name: scanner
+          image: your-ecr-account.dkr.ecr.us-east-1.amazonaws.com/cloud-asset-scanner:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "src.main", "worker", "--once"]
+
+          env:
+            - name: ASSET_ID
+              value: "${ASSET_ID}"
+            - name: DB_PATH
+              value: "/tmp/asset_registry.db"
+            - name: REPORTS_OUTPUT_DIR
+              value: "/tmp/reports"
+
+            # Secrets from Kubernetes Secret / AWS Secrets Manager
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: scanner-secrets
+                  key: anthropic-api-key
+
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: scanner-secrets
+                  key: slack-webhook-url
+                  optional: true
+
+            # AWS credentials via IRSA (IAM Roles for Service Accounts)
+            - name: AWS_REGION
+              value: "us-east-1"
+            # AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE injected by IRSA
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          # Read-only root filesystem
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+          # Liveness: job should complete within 5 minutes
+          # (no liveness probe needed for Jobs — ttlSecondsAfterFinished handles cleanup)
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: "100Mi"
+
+      # Node selector — run on security-designated nodes if available
+      # nodeSelector:
+      #   role: security-scanner
+
+      # Toleration for dedicated scanner nodes
+      # tolerations:
+      #   - key: "security-scanner"
+      #     operator: "Exists"
+      #     effect: "NoSchedule"
+
+---
+# Namespace for isolation
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security-scanning
+  labels:
+    purpose: security-tooling
+
+---
+# ServiceAccount with IRSA annotation for AWS access
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: security-scanner
+  namespace: security-scanning
+  annotations:
+    # Replace with your actual IAM role ARN
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/SecurityScannerRole"
+
+---
+# Secret template (populate via Secrets Manager or Vault in CI/CD)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: scanner-secrets
+  namespace: security-scanning
+type: Opaque
+stringData:
+  anthropic-api-key: "REPLACE_WITH_REAL_KEY"
+  slack-webhook-url: ""
